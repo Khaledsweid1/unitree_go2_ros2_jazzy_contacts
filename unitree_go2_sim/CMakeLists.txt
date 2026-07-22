@@ -21,7 +21,14 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 install(
-  DIRECTORY rviz 
+  DIRECTORY rviz
   DESTINATION share/${PROJECT_NAME}
 )
+
+# Python nodes (foot contact/force aggregator)
+install(PROGRAMS
+  scripts/foot_state_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

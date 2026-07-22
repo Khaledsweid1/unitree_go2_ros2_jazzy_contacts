@@ -10,6 +10,7 @@ from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
     GroupAction,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.conditions import IfCondition
@@ -63,7 +64,7 @@ def generate_launch_description():
     )
     declare_world_init_x = DeclareLaunchArgument("world_init_x", default_value="0.0")
     declare_world_init_y = DeclareLaunchArgument("world_init_y", default_value="0.0")
-    declare_world_init_z = DeclareLaunchArgument("world_init_z", default_value="0.375")
+    declare_world_init_z = DeclareLaunchArgument("world_init_z", default_value="0.30")
     declare_world_init_heading = DeclareLaunchArgument(
         "world_init_heading", default_value="0.0"
     )
@@ -198,35 +199,56 @@ def generate_launch_description():
     )
     
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
-    
-    # Setup to launch the simulator and Gazebo world
-    gz_sim = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')),
-        launch_arguments={
-            'gz_args': [PathJoinSubstitution([
-                unitree_go2_description,
-                'worlds',
-                'default.sdf'
-            ]), ' -r']  # Add -r flag to start unpaused
-        }.items(),
-    )
-    
-    # Spawn robot in Gazebo Sim
-    gazebo_spawn_robot = Node(
-        package='ros_gz_sim',
-        executable='create',
-        output='screen',
-        arguments=[
-            '-name', LaunchConfiguration('robot_name'),
-            '-topic', 'robot_description',
-            '-x', LaunchConfiguration('world_init_x'),
-            '-y', LaunchConfiguration('world_init_y'),
-            '-z', LaunchConfiguration('world_init_z'),
-            '-Y', LaunchConfiguration('world_init_heading')
-        ],
-    )
-    
+
+    # Setup to launch the simulator with the robot EMBEDDED in the world at load
+    # time (NOT spawned at runtime with `ros_gz create`). This is required for the
+    # foot contact sensors: gz's Contact system does not process contact sensors on
+    # a model spawned at runtime, only on models present when the world loads. So we
+    # build a combined world (default.sdf + the xacro robot as a <model>) on the fly
+    # and hand it to gz. gz_ros2_control still reads /robot_description from
+    # robot_state_publisher, exactly as before.
+    def _launch_gz_with_robot(context, *args, **kwargs):
+        import re
+        import subprocess
+        import tempfile
+
+        xacro_file = LaunchConfiguration("unitree_go2_description_path").perform(context)
+        world_file = LaunchConfiguration("world").perform(context)
+        name = LaunchConfiguration("robot_name").perform(context)
+        x = LaunchConfiguration("world_init_x").perform(context)
+        y = LaunchConfiguration("world_init_y").perform(context)
+        z = LaunchConfiguration("world_init_z").perform(context)
+        yaw = LaunchConfiguration("world_init_heading").perform(context)
+
+        urdf = subprocess.check_output(["xacro", xacro_file]).decode()
+        with tempfile.NamedTemporaryFile("w", suffix=".urdf", delete=False) as f:
+            f.write(urdf)
+            urdf_path = f.name
+        sdf = subprocess.check_output(["gz", "sdf", "-p", urdf_path]).decode()
+
+        model = re.search(r"<model\b.*</model>", sdf, re.S).group(0)
+        # force the model name to robot_name (the bridge topics depend on it) and
+        # give it the requested spawn pose
+        model = re.sub(r"<model name=(['\"]).*?\1", f"<model name='{name}'", model, count=1)
+        model = re.sub(
+            r"(<model name='%s'>)" % re.escape(name),
+            r"\1\n      <pose>%s %s %s 0 0 %s</pose>" % (x, y, z, yaw),
+            model, count=1,
+        )
+
+        combined = open(world_file).read().replace("</world>", "  " + model + "\n  </world>")
+        with tempfile.NamedTemporaryFile("w", suffix="_with_go2.sdf", delete=False) as f:
+            f.write(combined)
+            world_path = f.name
+
+        return [IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(pkg_ros_gz_sim, "launch", "gz_sim.launch.py")),
+            launch_arguments={"gz_args": [world_path, " -r"]}.items(),
+        )]
+
+    gz_sim = OpaqueFunction(function=_launch_gz_with_robot)
+
     # Bridge ROS 2 topics to Gazebo Sim
     gazebo_bridge = Node(
         package='ros_gz_bridge',
@@ -252,9 +274,50 @@ def generate_launch_description():
         ],
     )
     
+    # ---- Foot contact / force sensing ----
+    # The gz Contact system publishes one gz.msgs.Contacts topic per foot at a
+    # fixed scoped name (/world/<world>/model/<robot>/link/<leg>_foot_link/
+    # sensor/<leg>_foot_contact/contact). Bridge each to ROS and remap to a
+    # clean /foot_contact/<leg>; the aggregator collapses them into /foot_states.
+    robot_name = LaunchConfiguration("robot_name")
+    world_name = "default"  # must match <world name="..."> in worlds/default.sdf
+    feet = ["lf", "rf", "lh", "rh"]
+
+    def gz_contact_topic(leg):
+        return [
+            "/world/", world_name, "/model/", robot_name,
+            "/link/", leg, "_foot_link/sensor/", leg, "_foot_contact/contact",
+        ]
+
+    foot_contacts_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        name="foot_contacts_bridge",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+        arguments=[
+            gz_contact_topic(leg) + ["@ros_gz_interfaces/msg/Contacts[gz.msgs.Contacts"]
+            for leg in feet
+        ],
+        remappings=[
+            (gz_contact_topic(leg), f"/foot_contact/{leg}") for leg in feet
+        ],
+    )
+
+    foot_state_publisher = Node(
+        package="unitree_go2_sim",
+        executable="foot_state_publisher.py",
+        name="foot_state_publisher",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+    )
+
     # Use spawner nodes directly to handle the configuration step. (load → configure → activate)
     controller_spawner_js = TimerAction(
-        period=20.0,  # Wait for Gazebo to fully initialize
+        # Fire early: the spawner itself waits up to --controller-manager-timeout
+        # for the manager, so a long delay here just lets the robot free-fall
+        # uncontrolled while Gazebo starts. Grab it as soon as possible.
+        period=2.0,
         actions=[
             Node(
                 package="controller_manager",
@@ -270,7 +333,7 @@ def generate_launch_description():
     )
 
     controller_spawner_effort = TimerAction(
-        period=30.0,  # Wait 5 seconds after joint_states_controller
+        period=4.0,  # shortly after joint_states_controller; both wait for the manager
         actions=[
             Node(
                 package="controller_manager",
@@ -287,7 +350,7 @@ def generate_launch_description():
     
     # Shell script to manually check controller status 
     controller_status_check = TimerAction(
-        period=25.0,  # Check status after controllers should be loaded
+        period=8.0,  # Check status after controllers should be loaded
         actions=[
             ExecuteProcess(
                 cmd=["bash", "-c", "echo 'Checking controller status:' && ros2 control list_controllers"],
@@ -312,12 +375,15 @@ def generate_launch_description():
             declare_world_init_heading,
             declare_description_path, 
             
-            # Gazebo and robot nodes first
-            gz_sim,
+            # Gazebo and robot nodes first (robot is embedded in the world by gz_sim)
             robot_state_publisher_node,
-            gazebo_spawn_robot,
+            gz_sim,
             gazebo_bridge,
-            
+
+            # Foot contact/force sensing
+            foot_contacts_bridge,
+            foot_state_publisher,
+
             # CHAMP controller nodes
             quadruped_controller_node,
             state_estimator_node,

@@ -228,4 +228,71 @@
     <kd>1.0</kd>
   </gazebo>
 
+  <!-- ==================== Foot contact / force sensing ====================
+       Each *_foot_joint is FIXED and would normally be lumped into the calf
+       link during URDF->SDF conversion, erasing *_foot_link and mangling its
+       collision name. disableFixedJointLumping + preserveFixedJoint keep each
+       foot as a separate link with a clean *_foot_link_collision so a contact
+       sensor can attach to it. The Contact system (loaded in the world, see
+       worlds/default.sdf) then publishes gz.msgs.Contacts per foot on
+         /world/default/model/<robot>/link/<X>_foot_link/sensor/<X>_foot_contact/contact
+       carrying the contact flag AND the world-frame ground-reaction force.
+       Real force values require the dartsim physics engine (set in the world).
+  -->
+  <gazebo reference="lf_foot_joint">
+    <disableFixedJointLumping>true</disableFixedJointLumping>
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo reference="lf_foot_link">
+    <sensor name="lf_foot_contact" type="contact">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <contact>
+        <collision>lf_foot_link_collision</collision>
+      </contact>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="rf_foot_joint">
+    <disableFixedJointLumping>true</disableFixedJointLumping>
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo reference="rf_foot_link">
+    <sensor name="rf_foot_contact" type="contact">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <contact>
+        <collision>rf_foot_link_collision</collision>
+      </contact>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="lh_foot_joint">
+    <disableFixedJointLumping>true</disableFixedJointLumping>
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo reference="lh_foot_link">
+    <sensor name="lh_foot_contact" type="contact">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <contact>
+        <collision>lh_foot_link_collision</collision>
+      </contact>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="rh_foot_joint">
+    <disableFixedJointLumping>true</disableFixedJointLumping>
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo reference="rh_foot_link">
+    <sensor name="rh_foot_contact" type="contact">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <contact>
+        <collision>rh_foot_link_collision</collision>
+      </contact>
+    </sensor>
+  </gazebo>
+
 </robot>

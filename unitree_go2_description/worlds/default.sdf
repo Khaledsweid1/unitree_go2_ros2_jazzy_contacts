@@ -1,15 +1,26 @@
 <?xml version="1.0" ?>
 <sdf version="1.8">
   <world name="default">
+    <!-- dartsim is required for ground-truth contact/joint forces: the
+         bullet-featherstone engine does NOT populate contact-sensor or
+         force-torque wrenches (they read zero/garbage). -->
     <physics name="1ms" type="bullet-featherstone">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.0</real_time_factor>
     </physics>
-    
+
     <!-- Plugins -->
     <plugin
       filename="gz-sim-physics-system"
       name="gz::sim::systems::Physics">
+    </plugin>
+    <!-- Contact system: drives the four foot <sensor type="contact"> defined in
+         unitree_go2_gazebo.xacro. Must be a WORLD-level plugin: ros_gz `create`
+         strips <plugin> tags from a runtime-spawned model, so a model-level
+         Contact system would be ignored. Needs the dartsim engine for forces. -->
+    <plugin
+      filename="gz-sim-contact-system"
+      name="gz::sim::systems::Contact">
     </plugin>
     <plugin
       filename="gz-sim-sensors-system"

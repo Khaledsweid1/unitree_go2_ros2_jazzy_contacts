@@ -15,6 +15,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Joints.msg"
   "msg/Contacts.msg"
   "msg/ContactsStamped.msg"
+  "msg/FootStates.msg"
   "msg/Pose.msg"
   DEPENDENCIES std_msgs geometry_msgs
   )

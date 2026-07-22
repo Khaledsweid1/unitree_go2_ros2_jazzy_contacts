@@ -17,6 +17,11 @@
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher_gui</exec_depend>
+  <!-- foot contact/force aggregator node (scripts/foot_state_publisher.py) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
+  <exec_depend>champ_msgs</exec_depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>
